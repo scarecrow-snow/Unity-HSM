@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using System.Threading;
 using Cysharp.Threading.Tasks;
-using UnityUtils;
+
 
 namespace HSM
 {
@@ -28,7 +28,7 @@ namespace HSM
         /// </summary>
         public void Execute(IReadOnlyList<IActivity> activities, bool isDeactivate, CancellationToken ct = default)
         {
-            Clear();
+            Cancel();
 
             currentCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
@@ -50,7 +50,7 @@ namespace HSM
         /// </summary>
         public void Execute(IActivity activity, bool isDeactivate, CancellationToken ct = default)
         {
-            Clear();
+            Cancel();
 
             currentCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
@@ -145,32 +145,6 @@ namespace HSM
             runningTasks.Clear();
             currentCts?.Dispose();
             currentCts = null;
-        }
-
-        /// <summary>
-        /// Execute activities from a state using zero allocation (for external use with pooled collections)
-        /// </summary>
-        public void ExecuteStateActivitiesParallel(State state, bool isDeactivate, CancellationToken ct = default)
-        {
-            Execute(state.Activities, isDeactivate, ct);
-        }
-
-        /// <summary>
-        /// Execute activities from multiple states using pooled collections (zero allocation)
-        /// </summary>
-        public void ExecuteMultipleStatesActivitiesParallel(IReadOnlyList<State> states, bool isDeactivate, CancellationToken ct = default)
-        {
-            Clear();
-
-            currentCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-
-            // Use pooled collection for gathering activities
-            using (var scope = TempCollectionPool<List<PhaseStep>, PhaseStep>.GetScoped())
-            {
-                var tempSteps = scope.Collection;
-                GatherPhaseSteps(states, isDeactivate, tempSteps);
-                ExecutePhaseSteps(tempSteps, ct);
-            }
         }
     }
 }
