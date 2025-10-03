@@ -4,8 +4,10 @@ using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityUtils;
 
-namespace HSM {
-    public class PlayerStateDriver : MonoBehaviour {
+namespace HSM
+{
+    public class PlayerStateDriver : MonoBehaviour, IStateMachineProvider
+    {
         public PlayerContext ctx = new PlayerContext();
         public Transform groundCheck;
         public float groundRadius = 0.2f;
@@ -17,7 +19,10 @@ namespace HSM {
         StateMachine machine;
         State root;
 
-        void Awake() {
+        public StateMachine Machine { get => machine; }
+
+        void Awake()
+        {
             rb = gameObject.GetOrAdd<Rigidbody>();
             rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
 
@@ -30,7 +35,8 @@ namespace HSM {
             machine = builder.Build();
 
             // fallback: create a groundCheck just below the collider's bounds
-            if (groundCheck == null) {
+            if (groundCheck == null)
+            {
                 var col = GetComponent<Collider>();
                 var t = new GameObject("groundCheck").transform;
                 t.SetParent(transform, false);
@@ -40,7 +46,8 @@ namespace HSM {
             }
         }
 
-        void Update() {
+        void Update()
+        {
             float x = 0f;
             if (Keyboard.current.aKey.isPressed || Keyboard.current.leftArrowKey.isPressed) x -= 1f;
             if (Keyboard.current.dKey.isPressed || Keyboard.current.rightArrowKey.isPressed) x += 1f;
@@ -55,12 +62,13 @@ namespace HSM {
 
             if (path != lastPath)
             {
-　               Debug.Log($"State {path}");
-                 lastPath = path;
+                Debug.Log($"State {path}");
+                lastPath = path;
             }
         }
 
-        void FixedUpdate() {
+        void FixedUpdate()
+        {
             var v = rb.linearVelocity;
             v.x = ctx.velocity.x;
             rb.linearVelocity = v;
@@ -68,18 +76,20 @@ namespace HSM {
             ctx.velocity.x = rb.linearVelocity.x;
         }
 
-        void OnDrawGizmosSelected() {
+        void OnDrawGizmosSelected()
+        {
             if (!drawGizmos || groundCheck == null) return;
 
             Gizmos.color = Color.white;
             Gizmos.DrawWireSphere(groundCheck.position, groundRadius);
         }
 
-        
+
     }
 
     [Serializable]
-    public class PlayerContext {
+    public class PlayerContext
+    {
         public Vector3 move;
         public Vector3 velocity;
         public bool grounded;

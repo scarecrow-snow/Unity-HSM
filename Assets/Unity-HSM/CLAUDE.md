@@ -13,7 +13,8 @@ Unity-HSMは、Unityでキャラクター制御や複雑な状態管理を効率
 - **非同期アクティビティシステム**: 各状態にUniTaskベースの非同期処理を付与可能
 - **ゼロアロケーション状態遷移**: TempCollectionPoolによる完全なGCフリー状態遷移
 - **Physics統合**: Rigidbodyとの連携による物理ベースのキャラクター制御
-- **視覚的デバッグ**: 現在の状態パスをコンソールに表示、Gizmosによる地面判定可視化
+- **Unityエディタ統合**: CustomEditorとEditorWindowによる視覚的な状態機械デバッグツール
+- **柔軟なコンポーネント設計**: IStateMachineProviderインターフェースで既存クラスに統合可能
 
 ## アーキテクチャ
 
@@ -234,13 +235,17 @@ public class SequentialActivityGroup : Activity {
 ```
 Unity-HSM/
 ├── Core/                             # 核となるシステムクラス
-│   ├── State.cs                      # 基本状態クラス
+│   ├── State.cs                      # 基本状態クラス (ViewParameters追加)
 │   ├── StateMachine.cs               # 状態機械エンジン
 │   ├── Activity.cs                   # アクティビティ基底クラス
-│   ├── ActivityExecutor.cs           # アクティビティ実行エンジン (新規)
+│   ├── ActivityExecutor.cs           # アクティビティ実行エンジン
 │   ├── TransitionSequencer.cs        # 状態遷移管理
-│   ├── StateMachineBuilder.cs        # 状態機械構築
-│   └── Sequence.cs                   # シーケンス基底クラス
+│   └── StateMachineBuilder.cs        # 状態機械構築
+├── Editor/                           # Unityエディタ拡張
+│   ├── StateMachineEditor.cs         # Inspector拡張
+│   └── StateMachineViewer.cs         # EditorWindow - 階層可視化
+├── Interfaces/                       # インターフェース
+│   └── IStateMachineProvider.cs      # StateMachine提供インターフェース
 ├── States/                           # 具体的な状態実装
 │   ├── PlayerRoot.cs                 # プレイヤールート状態
 │   ├── Grounded.cs                   # 地上状態
@@ -250,11 +255,8 @@ Unity-HSM/
 ├── Activities/                       # アクティビティ実装
 │   ├── ColorPhaseActivity.cs         # 色変更アクティビティ
 │   ├── DelayActivationActivity.cs    # 遅延アクティベーション
-│   └── SequentialActivityGroup.cs    # 順次実行グループ (新規)
-├── Sequences/                        # シーケンス実装
-│   ├── ParallelPhase.cs              # 並列実行
-│   └── SequentialPhase.cs            # 順次実行
-├── Examples/                         # 使用例 (新規)
+│   └── SequentialActivityGroup.cs    # 順次実行グループ (Activities公開)
+├── Examples/                         # 使用例
 │   └── ActivityExecutorExample.cs    # ActivityExecutor使用例
 └── PlayerStateDriver.cs              # プレイヤー制御メインクラス
 ```
@@ -369,16 +371,103 @@ public CustomState(StateMachine m, State parent, PlayerContext ctx)
 }
 ```
 
+## Unityエディタ統合
+
+### IStateMachineProvider
+
+StateMachineをGameObjectにアタッチするには、`IStateMachineProvider`インターフェースを実装します：
+
+```csharp
+public interface IStateMachineProvider
+{
+    StateMachine Machine { get; }
+}
+```
+
+**実装例:**
+```csharp
+public class PlayerController : MonoBehaviour, IStateMachineProvider
+{
+    public StateMachine Machine { get; private set; }
+
+    void Awake()
+    {
+        var root = new PlayerRoot(null, null, ctx);
+        Machine = new StateMachineBuilder(root).Build();
+        Machine.Start();
+    }
+
+    void Update()
+    {
+        Machine?.Tick(Time.deltaTime);
+    }
+
+    void OnDestroy()
+    {
+        Machine?.Dispose();
+    }
+}
+```
+
+このインターフェースを実装することで、既存のMonoBehaviourクラスにHSMエディタツールの機能を追加できます。
+
+### StateMachineEditor (Inspector拡張)
+
+IStateMachineProviderを実装したコンポーネントのInspectorに以下が追加されます:
+- **"Open HSM Viewer"ボタン**: EditorWindowを開く
+- **Runtime Data (Foldout)**: 実行時の状態情報
+  - Active Path: 現在のアクティブな状態パス
+  - Is Executing Activities: アクティビティ実行中かどうか
+
+### StateMachineViewer (EditorWindow)
+
+**起動方法:**
+- メニューバー: `HSM/State Machine Viewer`
+- Inspector: `Open HSM Viewer`ボタン
+
+**機能:**
+- **階層表示**: State階層をインデント形式で表示
+- **Foldout**: 各Stateを折り畳み/展開可能
+- **カラーコーディング**:
+  - **緑色**: アクティブパス上の状態
+  - **グレー**: 非アクティブな状態
+- **アクティビティ表示**:
+  - 各StateのActivityリストを表示
+  - SequentialActivityGroupの内部Activityも階層表示
+  - ActivityModeに応じた色分け:
+    - Active: 明るい緑
+    - Activating: シアン
+    - Deactivating: オレンジ
+    - Inactive: グレー
+- **Content Scale**: スライダーでUI要素のサイズ調整（0.5x-2.0x）
+- **自動更新**: 実行中は自動でRepaint
+
+**表示例:**
+```
+State Machine: Player
+  PlayerRoot → Grounded
+    [Activity] ColorPhaseActivity (Active)  ← 緑色
+    Grounded → Move
+      [Activity] SequentialActivityGroup (Active)
+        └─ DelayActivity (Activating)  ← シアン色
+        └─ SomeActivity (Inactive)  ← グレー色
+      Move
+        [Activity] MoveActivity (Active)
+```
+
 ## デバッグとテスト
 
 ### 状態遷移の確認
 
-コンソールログで現在の状態パスを確認:
+**コンソールログ:**
 ```
 State PlayerRoot > Grounded > Idle
 State PlayerRoot > Grounded > Move
 State PlayerRoot > Airborne
 ```
+
+**HSM Viewer:**
+実行時にHSM Viewerウィンドウを開くことで、リアルタイムで状態階層とアクティビティの状態を確認できます。
 
 ### Gizmosによる地面判定可視化
 
@@ -445,16 +534,21 @@ static void StatesToExit(State from, State lca, List<State> result) {
 - **外部利用サンプル**: ActivityExecutorExampleによる使用例を追加
 - **アーキテクチャ改善**: 関心の分離により保守性とテスタビリティが向上
 
-## 今後の拡張予定
+### 2025年10月: Unityエディタ統合
+- **IStateMachineProvider**: インターフェースベースの柔軟なコンポーネント設計
+- **StateMachineEditor**: CustomEditorによるInspector拡張（IStateMachineProviderを実装した全MonoBehaviourに対応）
+- **StateMachineViewer**: EditorWindowによる階層可視化ツール
+- **State.ViewParameters**: エディタ用のFoldout状態管理（#if UNITY_EDITORで囲まれている）
+- **SequentialActivityGroup.Activities**: 内部アクティビティの公開プロパティ追加
+- **リアルタイムデバッグ**: 実行時の状態とアクティビティを視覚的に確認可能
 
-- [ ] アニメーション統合（Animator連携）
+## 今後の拡張予定
 - [ ] より多様なアクティビティタイプ
-- [ ] 状態の保存/復元機能
-- [ ] エディタ拡張による可視化ツール
+- [x] **エディタ拡張による可視化ツール** (完了: StateMachineViewerによる階層可視化実現)
 - [x] **パフォーマンス最適化** (完了: TempCollectionPoolによるゼロアロケーション実現)
-- [ ] メモリプロファイラー統合とパフォーマンス計測
 - [ ] 状態遷移パフォーマンステスト自動化
 - [ ] より大規模な状態機械での最適化検証
+- [ ] グラフベースのエディタ（GraphView利用）
 
 ---
 

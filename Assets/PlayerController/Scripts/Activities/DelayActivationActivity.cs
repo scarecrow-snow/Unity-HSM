@@ -4,12 +4,18 @@ using Cysharp.Threading.Tasks;
 using UnityEngine;
 
 namespace HSM {
-    public class DelayActivationActivity : Activity {
-        public float seconds = 0.2f;
-     
+    public class DelayActivationActivity : Activity
+    {
+        TimeSpan delay;
+        public DelayActivationActivity(float seconds = 0.2f)
+        {
+            delay = TimeSpan.FromSeconds(seconds);
+        }
+
+        
         public override async UniTask ActivateAsync(CancellationToken ct) {
             //Debug.Log($"Activating {GetType().Name} (mode={this.Mode}) after {seconds} seconds");
-            await UniTask.Delay(TimeSpan.FromSeconds(seconds), cancellationToken: ct);
+            await UniTask.Delay(delay, cancellationToken: ct);
             await base.ActivateAsync(ct);
         }
     }

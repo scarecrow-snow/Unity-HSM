@@ -6,14 +6,15 @@ using UnityEngine;
 namespace HSM {
     public class Idle : State {
         readonly PlayerContext ctx;
-        string lastPath;
-        
-        public Idle(StateMachine m, State parent, PlayerContext ctx) : base(m, parent) {
+
+        public Idle(StateMachine m, State parent, PlayerContext ctx) : base(m, parent)
+        {
             this.ctx = ctx;
             var Sequence = new SequentialActivityGroup();
-            Sequence.AddActivity(new MessageActivity("message 1"));
-            Sequence.AddActivity(new MessageActivity("message 2"));
+            Sequence.AddActivity(new MessageActivity("Idle 1"));
+            Sequence.AddActivity(new MessageActivity("Idle 2"));
             Add(Sequence);
+            
         }
 
         protected override State GetTransition() {

@@ -12,17 +12,13 @@ namespace HSM {
 
         Action nextPhase;                    // switch structure between phases
         (State from, State to)? pending;     // coalesce a single pending request
-        State lastFrom, lastTo;
+        
 
         // Fields to avoid closure allocation in nextPhase lambda
         State transitionFrom, transitionTo, transitionLca;
         bool hasEnterPhase;
 
         CancellationTokenSource cts;
-
-        // Pooled collections for zero-allocation transitions
-        List<State> exitChainPool, enterChainPool;
-        List<PhaseStep> exitStepsPool, enterStepsPool;
 
         public TransitionSequencer(StateMachine machine) {
             Machine = machine;
@@ -93,24 +89,24 @@ namespace HSM {
             cts?.Cancel();
             cts = new CancellationTokenSource();
 
-            // Clean up any existing pooled collections from previous transition
-            ReleasePooledCollections();
-
             var lca = Lca(from, to);
             //Debug.Log($"[TransitionSequencer] LCA: {lca?.GetType().Name}");
 
-            // Get pooled collections for exit phase
-            exitChainPool = TempCollectionPool<List<State>, State>.Get();
-            exitStepsPool = TempCollectionPool<List<PhaseStep>, PhaseStep>.Get();
+            // Use temporary pooled collections for exit phase preparation
+            using (var exitChainScope = TempCollectionPool<List<State>, State>.GetScoped())
+            using (var exitStepsScope = TempCollectionPool<List<PhaseStep>, PhaseStep>.GetScoped()) {
+                var exitChain = exitChainScope.Collection;
+                var exitSteps = exitStepsScope.Collection;
 
-            StatesToExit(from, lca, exitChainPool);
-            //Debug.Log($"[TransitionSequencer] States to exit: {exitChainPool.Count}");
+                StatesToExit(from, lca, exitChain);
+                //Debug.Log($"[TransitionSequencer] States to exit: {exitChain.Count}");
 
-            ActivityExecutor.GatherPhaseSteps(exitChainPool, deactivate: true, exitStepsPool);
-            //Debug.Log($"[TransitionSequencer] Exit steps: {exitStepsPool.Count}");
+                ActivityExecutor.GatherPhaseSteps(exitChain, deactivate: true, exitSteps);
+                //Debug.Log($"[TransitionSequencer] Exit steps: {exitSteps.Count}");
 
-            // 1. Deactivate the "old branch" using parallel execution
-            ActivityExecutor.ExecutePhaseSteps(exitStepsPool, cts.Token);
+                // 1. Deactivate the "old branch" using parallel execution
+                ActivityExecutor.ExecutePhaseSteps(exitSteps, cts.Token);
+            }
 
             // Store transition parameters to avoid closure allocation
             transitionFrom = from;
@@ -127,25 +123,6 @@ namespace HSM {
             }
         }
 
-        void ReleasePooledCollections() {
-            if (exitChainPool != null) {
-                TempCollectionPool<List<State>, State>.Release(exitChainPool);
-                exitChainPool = null;
-            }
-            if (exitStepsPool != null) {
-                TempCollectionPool<List<PhaseStep>, PhaseStep>.Release(exitStepsPool);
-                exitStepsPool = null;
-            }
-            if (enterChainPool != null) {
-                TempCollectionPool<List<State>, State>.Release(enterChainPool);
-                enterChainPool = null;
-            }
-            if (enterStepsPool != null) {
-                TempCollectionPool<List<PhaseStep>, PhaseStep>.Release(enterStepsPool);
-                enterStepsPool = null;
-            }
-        }
-
         void ExecuteEnterPhase() {
             //Debug.Log($"[TransitionSequencer] ExecuteEnterPhase: {transitionFrom?.GetType().Name} -> {transitionTo?.GetType().Name}");
 
@@ -153,17 +130,21 @@ namespace HSM {
             Machine.ChangeState(transitionFrom, transitionTo);
 
             // 3. Activate the "new branch"
-            enterChainPool = TempCollectionPool<List<State>, State>.Get();
-            enterStepsPool = TempCollectionPool<List<PhaseStep>, PhaseStep>.Get();
+            using (var enterChainScope = TempCollectionPool<List<State>, State>.GetScoped())
+            using (var enterStepsScope = TempCollectionPool<List<PhaseStep>, PhaseStep>.GetScoped()) {
+                var enterChain = enterChainScope.Collection;
+                var enterSteps = enterStepsScope.Collection;
 
-            StatesToEnter(transitionTo, transitionLca, enterChainPool);
-            //Debug.Log($"[TransitionSequencer] States to enter: {enterChainPool.Count}");
+                StatesToEnter(transitionTo, transitionLca, enterChain);
+                //Debug.Log($"[TransitionSequencer] States to enter: {enterChain.Count}");
 
-            ActivityExecutor.GatherPhaseSteps(enterChainPool, deactivate: false, enterStepsPool);
-            //Debug.Log($"[TransitionSequencer] Enter steps: {enterStepsPool.Count}");
+                ActivityExecutor.GatherPhaseSteps(enterChain, deactivate: false, enterSteps);
+                //Debug.Log($"[TransitionSequencer] Enter steps: {enterSteps.Count}");
 
-            // Execute enter phase using parallel execution
-            ActivityExecutor.ExecutePhaseSteps(enterStepsPool, cts.Token);
+                // Execute enter phase using parallel execution
+                ActivityExecutor.ExecutePhaseSteps(enterSteps, cts.Token);
+            }
+
             hasEnterPhase = false; // Clear flag after execution
 
             //Debug.Log($"[TransitionSequencer] ExecuteEnterPhase complete, hasEnterPhase: {hasEnterPhase}");
@@ -178,7 +159,6 @@ namespace HSM {
         void EndTransition() {
             //Debug.Log($"[TransitionSequencer] EndTransition: clearing tasks");
             ActivityExecutor.Clear();
-            ReleasePooledCollections();
 
             if (pending.HasValue) {
                 (State from, State to) p = pending.Value;
@@ -210,8 +190,8 @@ namespace HSM {
         // Compute the Lowest Common Ancestor of two states.
         public static State Lca(State a, State b) {
             // Create a set of all parents of 'a'
-            var ap = TempCollectionPool<HashSet<State>, State>.Get();
-            try {
+            using (var scope = TempCollectionPool<HashSet<State>, State>.GetScoped()) {
+                var ap = scope.Collection;
                 for (var s = a; s != null; s = s.Parent) ap.Add(s);
 
                 // Find the first parent of 'b' that is also a parent of 'a'
@@ -221,8 +201,6 @@ namespace HSM {
 
                 // If no common ancestor found, return null
                 return null;
-            } finally {
-                TempCollectionPool<HashSet<State>, State>.Release(ap);
             }
         }
     }

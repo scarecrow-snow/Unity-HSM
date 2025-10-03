@@ -4,16 +4,31 @@ using System.Reflection;
 namespace HSM {
     public class StateMachineBuilder {
         readonly State root;
-
-        public StateMachineBuilder(State root) {
+        readonly HashSet<State> states = new HashSet<State>();
+        
+        public StateMachineBuilder(State root)
+        {
             this.root = root;
         }
 
         public StateMachine Build() {
             var m = new StateMachine(root);
-            Wire(root, m, new HashSet<State>());
+            Wire(root, m, states);
+
+            // Wire up dispose logic to dispose all collected states
+            m.DisposeAllStates = () =>
+            {
+                foreach (var state in states)
+                {
+                    state?.Dispose();
+                }
+
+                states.Clear();
+            };
+
             return m;
         }
+
 
         void Wire(State s, StateMachine m, HashSet<State> visited) {
             if (s == null) return;

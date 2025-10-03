@@ -13,7 +13,7 @@ namespace HSM.Examples {
         async void Start() {
             try {
                 // Example 1: Execute activities in parallel
-                await ExecuteActivitiesParallelExample();
+                ExecuteActivitiesParallelExample().Forget();
 
                 // Example 2: Execute activities sequentially
                 await ExecuteActivitiesSequentialExample();
@@ -36,7 +36,7 @@ namespace HSM.Examples {
             };
 
             // Execute all activities in parallel (zero allocation iteration)
-            activityExecutor.ExecuteActivitiesParallel(activities, isDeactivate: false, destroyCancellationToken);
+            activityExecutor.Execute(activities, isDeactivate: false, destroyCancellationToken);
 
             // Wait for completion with timeout protection
             float timeout = 10f;
@@ -53,19 +53,23 @@ namespace HSM.Examples {
             Debug.Log("Parallel execution completed!");
         }
 
-        async UniTask ExecuteActivitiesSequentialExample() {
+        async UniTask ExecuteActivitiesSequentialExample()
+        {
             Debug.Log("=== Sequential Activity Execution Example (Zero Allocation) ===");
 
-            var activities = new List<IActivity> {
-                new MessageActivity("Sequential Task 1"),
-                new MessageActivity("Sequential Task 2"),
-                new MessageActivity("Sequential Task 3")
-            };
+            SequentialActivityGroup sequens = new();
+            sequens.AddActivity(new MessageActivity("Sequential Task 1"));
+            sequens.AddActivity(new DelayActivationActivity(0.5f));
+            sequens.AddActivity(new MessageActivity("Sequential Task 2"));
+            sequens.AddActivity(new DelayActivationActivity(0.5f));
+            sequens.AddActivity(new MessageActivity("Sequential Task 3"));
+            
 
             // Execute all activities sequentially (zero allocation iteration)
-            await activityExecutor.ExecuteActivitiesSequentialAsync(activities, isDeactivate: false, destroyCancellationToken);
+            activityExecutor.Execute(sequens, isDeactivate: false, destroyCancellationToken);
 
             Debug.Log("Sequential execution completed!");
+            await UniTask.CompletedTask;
         }
 
         async UniTask CustomActivityControlExample() {
@@ -77,7 +81,7 @@ namespace HSM.Examples {
             };
 
             // Start execution (zero allocation)
-            activityExecutor.ExecuteActivitiesParallel(activities, isDeactivate: false, destroyCancellationToken);
+            activityExecutor.Execute(activities, isDeactivate: false, destroyCancellationToken);
 
             // Monitor progress
             float startTime = Time.time;

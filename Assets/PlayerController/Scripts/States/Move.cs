@@ -4,8 +4,14 @@ namespace HSM {
     public class Move : State {
         readonly PlayerContext ctx;
 
-        public Move(StateMachine m, State parent, PlayerContext ctx) : base(m, parent) {
+        public Move(StateMachine m, State parent, PlayerContext ctx) : base(m, parent)
+        {
             this.ctx = ctx;
+            var Sequence = new SequentialActivityGroup();
+            Sequence.AddActivity(new MessageActivity("move 1"));
+            Sequence.AddActivity(new DelayActivationActivity());
+            Sequence.AddActivity(new MessageActivity("move 2"));
+            Add(Sequence);
         }
 
         protected override State GetTransition() {
