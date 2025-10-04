@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using System;
-
+using ZLinq;
 
 namespace HSM
 {
@@ -10,15 +10,15 @@ namespace HSM
     {
         CancellationTokenSource currentCts;
         bool isExecuting;
-        bool isDeactivate;
         readonly List<IActivity> managedActivities = new();
+        readonly List<UniTask> taskList = new(); // Reusable task list for zero allocation
 
         public bool IsExecuting => isExecuting;
 
         /// <summary>
-        /// Execute a collection of activities in parallel
+        /// Activate a collection of activities in parallel
         /// </summary>
-        public async UniTask ExecuteAsync(IReadOnlyList<IActivity> activities, bool isDeactivate, CancellationToken ct = default)
+        public async UniTask ActivateAsync(IReadOnlyList<IActivity> activities, CancellationToken ct = default)
         {
             Cancel();
 
@@ -31,24 +31,23 @@ namespace HSM
                 }
             }
 
-            this.isDeactivate = isDeactivate;
-            this.isExecuting = true;
+            isExecuting = true;
             currentCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
             try
             {
-                var tasks = new List<UniTask>();
+                taskList.Clear();
                 for (int i = 0; i < activities.Count; i++)
                 {
                     var activity = activities[i];
-                    bool shouldExecute = isDeactivate ? (activity.Mode == ActivityMode.Active)
-                                                     : (activity.Mode == ActivityMode.Inactive);
-                    if (!shouldExecute) continue;
-
-                    tasks.Add(ExecuteActivitySafe(activity, currentCts.Token));
+                    if (activity.Mode == ActivityMode.Inactive)
+                    {
+                        taskList.Add(ExecuteActivitySafe(activity, true, currentCts.Token));
+                    }
                 }
 
-                await UniTask.WhenAll(tasks);
+                await taskList;
+                //await UniTask.WhenAll(taskList);
             }
             finally
             {
@@ -57,9 +56,9 @@ namespace HSM
         }
 
         /// <summary>
-        /// Execute a single activity
+        /// Activate a single activity
         /// </summary>
-        public async UniTask ExecuteAsync(IActivity activity, bool isDeactivate, CancellationToken ct = default)
+        public async UniTask ActivateAsync(IActivity activity, CancellationToken ct = default)
         {
             Cancel();
 
@@ -69,17 +68,14 @@ namespace HSM
                 managedActivities.Add(activity);
             }
 
-            this.isDeactivate = isDeactivate;
-            this.isExecuting = true;
+            isExecuting = true;
             currentCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
             try
             {
-                bool shouldExecute = isDeactivate ? (activity.Mode == ActivityMode.Active)
-                                                 : (activity.Mode == ActivityMode.Inactive);
-                if (shouldExecute)
+                if (activity.Mode == ActivityMode.Inactive)
                 {
-                    await ExecuteActivitySafe(activity, currentCts.Token);
+                    await ExecuteActivitySafe(activity, true, currentCts.Token);
                 }
             }
             finally
@@ -88,14 +84,68 @@ namespace HSM
             }
         }
 
-        async UniTask ExecuteActivitySafe(IActivity activity, CancellationToken ct)
+        /// <summary>
+        /// Deactivate a collection of activities in parallel
+        /// </summary>
+        public async UniTask DeactivateAsync(IReadOnlyList<IActivity> activities, CancellationToken ct = default)
+        {
+            Cancel();
+
+            isExecuting = true;
+            currentCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+            try
+            {
+                taskList.Clear();
+                for (int i = 0; i < activities.Count; i++)
+                {
+                    var activity = activities[i];
+                    if (activity.Mode == ActivityMode.Active)
+                    {
+                        taskList.Add(ExecuteActivitySafe(activity, false, currentCts.Token));
+                    }
+                }
+
+                await taskList;
+                //await UniTask.WhenAll(taskList);
+            }
+            finally
+            {
+                isExecuting = false;
+            }
+        }
+
+        /// <summary>
+        /// Deactivate a single activity
+        /// </summary>
+        public async UniTask DeactivateAsync(IActivity activity, CancellationToken ct = default)
+        {
+            Cancel();
+
+            isExecuting = true;
+            currentCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+            try
+            {
+                if (activity.Mode == ActivityMode.Active)
+                {
+                    await ExecuteActivitySafe(activity, false, currentCts.Token);
+                }
+            }
+            finally
+            {
+                isExecuting = false;
+            }
+        }
+
+        async UniTask ExecuteActivitySafe(IActivity activity, bool isActivate, CancellationToken ct)
         {
             try
             {
-                if (isDeactivate)
-                    await activity.DeactivateAsync(ct);
-                else
+                if (isActivate)
                     await activity.ActivateAsync(ct);
+                else
+                    await activity.DeactivateAsync(ct);
             }
             catch (OperationCanceledException)
             {

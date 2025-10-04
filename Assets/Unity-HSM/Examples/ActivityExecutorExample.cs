@@ -25,7 +25,8 @@ namespace HSM.Examples {
             }
         }
 
-        async UniTask ExecuteActivitiesParallelExample() {
+        async UniTask ExecuteActivitiesParallelExample()
+        {
             Debug.Log("=== Parallel Activity Execution Example (Zero Allocation) ===");
 
             // Use List<T> which implements IReadOnlyList<T> - no allocation overhead
@@ -36,9 +37,13 @@ namespace HSM.Examples {
             };
 
             // Execute all activities in parallel and await completion
-            await activityExecutor.ExecuteAsync(activities, isDeactivate: false, destroyCancellationToken);
+            await activityExecutor.ActivateAsync(activities, destroyCancellationToken);
 
-            Debug.Log("Parallel execution completed!");
+            Debug.Log("Parallel Activate completed!");
+
+            // Deactivate when done
+            await activityExecutor.DeactivateAsync(activities, destroyCancellationToken);
+            Debug.Log("Parallel Deactivate completed!");
         }
 
         async UniTask ExecuteActivitiesSequentialExample()
@@ -53,9 +58,13 @@ namespace HSM.Examples {
             sequens.AddActivity(new MessageActivity("Sequential Task 3"));
 
             // Execute all activities sequentially and await completion
-            await activityExecutor.ExecuteAsync(sequens, isDeactivate: false, destroyCancellationToken);
+            await activityExecutor.ActivateAsync(sequens, destroyCancellationToken);
 
-            Debug.Log("Sequential execution completed!");
+            Debug.Log("Sequential Activate completed!");
+
+            // Deactivate when done
+            await activityExecutor.DeactivateAsync(sequens, destroyCancellationToken);
+            Debug.Log("Sequential Deactivate completed!");
         }
 
         async UniTask CustomActivityControlExample() {
@@ -70,7 +79,7 @@ namespace HSM.Examples {
             var cts = new CancellationTokenSource();
             var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(destroyCancellationToken, cts.Token);
 
-            var executeTask = activityExecutor.ExecuteAsync(activities, isDeactivate: false, linkedCts.Token);
+            var executeTask = activityExecutor.ActivateAsync(activities, linkedCts.Token);
             var timeoutTask = UniTask.Delay(System.TimeSpan.FromSeconds(5f), cancellationToken: destroyCancellationToken);
 
             var completedTask = await UniTask.WhenAny(executeTask, timeoutTask);
@@ -78,6 +87,9 @@ namespace HSM.Examples {
             if (completedTask == 1) {
                 Debug.Log("Timeout! Cancelling activities...");
                 cts.Cancel();
+            } else {
+                // Deactivate when done
+                await activityExecutor.DeactivateAsync(activities, destroyCancellationToken);
             }
 
             linkedCts.Dispose();
@@ -86,9 +98,11 @@ namespace HSM.Examples {
             Debug.Log("Custom control example completed!");
         }
 
-        void OnDestroy() {
+        void OnDestroy()
+        {
             // Dispose ActivityExecutor - this will cancel and dispose all managed activities
             activityExecutor?.Dispose();
+            Debug.Log("ActivityExecutor disposed");
         }
     }
 }

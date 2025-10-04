@@ -439,29 +439,42 @@ var activities = new List<IActivity>
     new ParticleActivity(particles)
 };
 
-// 並列実行開始
-executor.ExecuteActivitiesParallel(activities, isDeactivate: false, ct);
+// 並列でActivate
+await executor.ActivateAsync(activities, ct);
 
-// 完了待機
-while (executor.IsExecuting)
-{
-    await UniTask.Yield();
-}
+// 使用後にDeactivate
+await executor.DeactivateAsync(activities, ct);
 ```
 
-### 順次実行
+### 単一Activity実行
 
 ```csharp
 var executor = new ActivityExecutor();
-var activities = new List<IActivity>
-{
-    new DelayActivationActivity(0.2f),
-    new ColorPhaseActivity(renderer, Color.red, Color.blue),
-    new DelayActivationActivity(0.3f)
-};
+var activity = new DelayActivationActivity(1f);
 
-// 順次実行（完了まで待機）
-await executor.ExecuteActivitiesSequentialAsync(activities, isDeactivate: false, ct);
+// Activate
+await executor.ActivateAsync(activity, ct);
+
+// 使用後にDeactivate
+await executor.DeactivateAsync(activity, ct);
+```
+
+### 順次実行（SequentialActivityGroup使用）
+
+順次実行が必要な場合は、SequentialActivityGroupを使用します：
+
+```csharp
+var executor = new ActivityExecutor();
+var sequence = new SequentialActivityGroup();
+sequence.AddActivity(new DelayActivationActivity(0.2f));
+sequence.AddActivity(new ColorPhaseActivity(renderer, Color.red, Color.blue));
+sequence.AddActivity(new DelayActivationActivity(0.3f));
+
+// SequentialActivityGroupをActivate
+await executor.ActivateAsync(sequence, ct);
+
+// 使用後にDeactivate
+await executor.DeactivateAsync(sequence, ct);
 ```
 
 ### 実用例: カットシーン
@@ -470,23 +483,45 @@ await executor.ExecuteActivitiesSequentialAsync(activities, isDeactivate: false,
 public class CutsceneController : MonoBehaviour
 {
     ActivityExecutor executor = new ActivityExecutor();
+    SequentialActivityGroup sequence;
+
+    void Awake()
+    {
+        sequence = new SequentialActivityGroup();
+        sequence.AddActivity(new DelayActivationActivity(1f));
+        sequence.AddActivity(new AudioActivity(bgm, openingMusic));
+        sequence.AddActivity(new AnimationActivity(camera, "CameraZoom"));
+        sequence.AddActivity(new DelayActivationActivity(2f));
+        sequence.AddActivity(new DialogActivity(dialogUI, "Welcome..."));
+        sequence.AddActivity(new DelayActivationActivity(1f));
+    }
 
     public async UniTask PlayCutscene(CancellationToken ct)
     {
-        var sequence = new List<IActivity>
-        {
-            new DelayActivationActivity(1f),
-            new AudioActivity(bgm, openingMusic),
-            new AnimationActivity(camera, "CameraZoom"),
-            new DelayActivationActivity(2f),
-            new DialogActivity(dialogUI, "Welcome..."),
-            new DelayActivationActivity(1f)
-        };
+        // カットシーンを再生
+        await executor.ActivateAsync(sequence, ct);
+    }
 
-        await executor.ExecuteActivitiesSequentialAsync(sequence, false, ct);
+    public async UniTask StopCutscene(CancellationToken ct)
+    {
+        // カットシーンを停止
+        await executor.DeactivateAsync(sequence, ct);
+    }
+
+    void OnDestroy()
+    {
+        // リソースの解放
+        executor?.Dispose();
     }
 }
 ```
+
+### ActivityExecutorの重要な機能
+
+- **Activate/Deactivateのペア管理**: ActivateAsyncで起動したActivityは、DeactivateAsyncで明示的に終了します
+- **自動リソース管理**: 実行されたActivityは自動的に管理され、Dispose()時に解放されます
+- **キャンセル対応**: Cancel()で実行中のすべてのタスクをキャンセルできます
+- **IDisposable実装**: 使用後は必ずDispose()を呼び出してリソースを解放してください
 
 ## ベストプラクティス
 

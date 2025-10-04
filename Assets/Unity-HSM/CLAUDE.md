@@ -93,25 +93,31 @@ public abstract class Activity : IActivity {
 - StateMachineBuilderがすべてのStateとActivityを収集し、Dispose時に適切にクリーンアップします
 
 #### ActivityExecutor (Runtime/Activities/ActivityExecutor.cs)
-汎用アクティビティ実行エンジン。TransitionSequencerから完全に独立し、外部からも自由に利用可能です。
+汎用アクティビティ実行エンジン。TransitionSequencerから完全に独立し、外部からも自由に利用可能です。`IDisposable`を実装しています。
 
 ```csharp
-public class ActivityExecutor {
+public class ActivityExecutor : IDisposable {
     public bool IsExecuting { get; }
 
     // Activity実行（並列）
-    public void Execute(IReadOnlyList<IActivity> activities, bool isDeactivate, CancellationToken ct = default)
-    public void Execute(IActivity activity, bool isDeactivate, CancellationToken ct = default)
+    public async UniTask ActivateAsync(IReadOnlyList<IActivity> activities, CancellationToken ct = default)
+    public async UniTask ActivateAsync(IActivity activity, CancellationToken ct = default)
 
-    // タスク完了確認とキャンセル
-    public bool AreTasksComplete()
+    // Activityの非活性化（並列）
+    public async UniTask DeactivateAsync(IReadOnlyList<IActivity> activities, CancellationToken ct = default)
+    public async UniTask DeactivateAsync(IActivity activity, CancellationToken ct = default)
+
+    // タスク管理
     public void Cancel()
     public void Clear()
+    public void Dispose()
 }
 ```
 
 **主要機能:**
+- **Activate/Deactivateのペア管理**: 呼び出し側が起動と終了のタイミングを完全に制御
 - **汎用Activity実行**: 状態遷移とは無関係に任意のActivityを実行可能
+- **自動リソース管理**: 実行されたActivityは自動的に管理され、Dispose()時に解放
 - **UniTaskVoid + fire-and-forget**: メモリリーク対策済みの非同期実行
 - **カウンター方式の完了追跡**: `runningTaskCount`による軽量な完了判定
 - **完全独立**: TransitionSequencerへの依存なし、外部から自由に利用可能
@@ -121,11 +127,14 @@ public class ActivityExecutor {
 var executor = new ActivityExecutor();
 var activities = new List<IActivity> { new SomeActivity(), new OtherActivity() };
 
-// 並列実行
-executor.Execute(activities, isDeactivate: false, ct);
-while (executor.IsExecuting) {
-    await UniTask.Yield();
-}
+// 並列でActivate
+await executor.ActivateAsync(activities, ct);
+
+// 使用後にDeactivate
+await executor.DeactivateAsync(activities, ct);
+
+// 破棄
+executor.Dispose();
 ```
 
 #### TransitionSequencer (Runtime/Core/TransitionSequencer.cs)
@@ -576,6 +585,7 @@ static void StatesToExit(State from, State lca, List<State> result) {
 - **ActivityExecutor汎用化**: 状態遷移専用ロジックを削除し、完全な汎用Activityエンジンに
 - **フォルダ構造整理**: Runtime/Core, Runtime/Activities, Editorなど機能別に再編成
 - **責任の明確化**: Core（ステートマシン）とActivities（実行エンジン）の分離
+- **ActivateAsync/DeactivateAsync分離**: ExecuteAsyncをActivateAsync/DeactivateAsyncに分割し、呼び出し側が完全に制御可能に
 
 ## 今後の拡張予定
 - [ ] より多様なアクティビティタイプ
