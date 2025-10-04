@@ -35,20 +35,8 @@ namespace HSM.Examples {
                 new MessageActivity("Parallel Task 3")
             };
 
-            // Execute all activities in parallel (zero allocation iteration)
-            activityExecutor.Execute(activities, isDeactivate: false, destroyCancellationToken);
-
-            // Wait for completion with timeout protection
-            float timeout = 10f;
-            float startTime = Time.time;
-            while (activityExecutor.IsExecuting) {
-                if (Time.time - startTime > timeout) {
-                    Debug.LogWarning("Parallel execution timeout!");
-                    activityExecutor.Cancel();
-                    break;
-                }
-                await UniTask.Yield(destroyCancellationToken);
-            }
+            // Execute all activities in parallel and await completion
+            await activityExecutor.ExecuteAsync(activities, isDeactivate: false, destroyCancellationToken);
 
             Debug.Log("Parallel execution completed!");
         }
@@ -63,13 +51,11 @@ namespace HSM.Examples {
             sequens.AddActivity(new MessageActivity("Sequential Task 2"));
             sequens.AddActivity(new DelayActivationActivity(0.5f));
             sequens.AddActivity(new MessageActivity("Sequential Task 3"));
-            
 
-            // Execute all activities sequentially (zero allocation iteration)
-            activityExecutor.Execute(sequens, isDeactivate: false, destroyCancellationToken);
+            // Execute all activities sequentially and await completion
+            await activityExecutor.ExecuteAsync(sequens, isDeactivate: false, destroyCancellationToken);
 
             Debug.Log("Sequential execution completed!");
-            await UniTask.CompletedTask;
         }
 
         async UniTask CustomActivityControlExample() {
@@ -80,26 +66,29 @@ namespace HSM.Examples {
                 new MessageActivity("Custom Task 2")
             };
 
-            // Start execution (zero allocation)
-            activityExecutor.Execute(activities, isDeactivate: false, destroyCancellationToken);
+            // Execute activities with timeout
+            var cts = new CancellationTokenSource();
+            var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(destroyCancellationToken, cts.Token);
 
-            // Monitor progress
-            float startTime = Time.time;
-            while (activityExecutor.IsExecuting) {
-                if (Time.time - startTime > 5f) {
-                    Debug.Log("Timeout! Cancelling activities...");
-                    activityExecutor.Cancel();
-                    break;
-                }
-                await UniTask.Yield(destroyCancellationToken);
+            var executeTask = activityExecutor.ExecuteAsync(activities, isDeactivate: false, linkedCts.Token);
+            var timeoutTask = UniTask.Delay(System.TimeSpan.FromSeconds(5f), cancellationToken: destroyCancellationToken);
+
+            var completedTask = await UniTask.WhenAny(executeTask, timeoutTask);
+
+            if (completedTask == 1) {
+                Debug.Log("Timeout! Cancelling activities...");
+                cts.Cancel();
             }
+
+            linkedCts.Dispose();
+            cts.Dispose();
 
             Debug.Log("Custom control example completed!");
         }
 
         void OnDestroy() {
-            // Clean up - destroyCancellationToken handles MonoBehaviour lifecycle automatically
-            activityExecutor?.Cancel();
+            // Dispose ActivityExecutor - this will cancel and dispose all managed activities
+            activityExecutor?.Dispose();
         }
     }
 }

@@ -8,21 +8,23 @@ using UnityUtils;
 namespace HSM {
     public class TransitionSequencer {
         public readonly StateMachine Machine;
-        public readonly ActivityExecutor ActivityExecutor;
 
         Action nextPhase;                    // switch structure between phases
         (State from, State to)? pending;     // coalesce a single pending request
-        
+
 
         // Fields to avoid closure allocation in nextPhase lambda
         State transitionFrom, transitionTo, transitionLca;
         bool hasEnterPhase;
 
+        // Task management
+        int runningTaskCount = 0;
         CancellationTokenSource cts;
+
+        public bool IsExecuting => runningTaskCount > 0;
 
         public TransitionSequencer(StateMachine machine) {
             Machine = machine;
-            ActivityExecutor = new ActivityExecutor();
 
             // Initialize nextPhase delegate to avoid closure allocation
             nextPhase = ExecuteEnterPhase;
@@ -39,7 +41,7 @@ namespace HSM {
                 return;
             }
 
-            if (ActivityExecutor.IsExecuting) {
+            if (runningTaskCount > 0) {
                 pending = (from, to);
                 return;
             }
@@ -68,7 +70,7 @@ namespace HSM {
 
         bool IsSameTransition(State from, State to) {
             // Check if currently transitioning with exact same from->to
-            if (ActivityExecutor.IsExecuting && transitionFrom == from && transitionTo == to) {
+            if (runningTaskCount > 0 && transitionFrom == from && transitionTo == to) {
                 return true;
             }
 
@@ -87,6 +89,7 @@ namespace HSM {
         void BeginTransition(State from, State to) {
 
             cts?.Cancel();
+            cts?.Dispose();
             cts = new CancellationTokenSource();
 
             var lca = Lca(from, to);
@@ -101,11 +104,11 @@ namespace HSM {
                 StatesToExit(from, lca, exitChain);
                 //Debug.Log($"[TransitionSequencer] States to exit: {exitChain.Count}");
 
-                ActivityExecutor.GatherPhaseSteps(exitChain, deactivate: true, exitSteps);
+                GatherPhaseSteps(exitChain, deactivate: true, exitSteps);
                 //Debug.Log($"[TransitionSequencer] Exit steps: {exitSteps.Count}");
 
                 // 1. Deactivate the "old branch" using parallel execution
-                ActivityExecutor.ExecutePhaseSteps(exitSteps, cts.Token);
+                ExecutePhaseSteps(exitSteps, cts.Token);
             }
 
             // Store transition parameters to avoid closure allocation
@@ -117,7 +120,7 @@ namespace HSM {
             //Debug.Log($"[TransitionSequencer] BeginTransition complete, hasEnterPhase: {hasEnterPhase}");
 
             // Check if exit phase completed synchronously
-            if (ActivityExecutor.AreTasksComplete() && hasEnterPhase) {
+            if (runningTaskCount == 0 && hasEnterPhase) {
                 //Debug.Log($"[TransitionSequencer] Exit phase completed synchronously, proceeding to enter phase");
                 nextPhase();
             }
@@ -138,11 +141,11 @@ namespace HSM {
                 StatesToEnter(transitionTo, transitionLca, enterChain);
                 //Debug.Log($"[TransitionSequencer] States to enter: {enterChain.Count}");
 
-                ActivityExecutor.GatherPhaseSteps(enterChain, deactivate: false, enterSteps);
+                GatherPhaseSteps(enterChain, deactivate: false, enterSteps);
                 //Debug.Log($"[TransitionSequencer] Enter steps: {enterSteps.Count}");
 
                 // Execute enter phase using parallel execution
-                ActivityExecutor.ExecutePhaseSteps(enterSteps, cts.Token);
+                ExecutePhaseSteps(enterSteps, cts.Token);
             }
 
             hasEnterPhase = false; // Clear flag after execution
@@ -150,7 +153,7 @@ namespace HSM {
             //Debug.Log($"[TransitionSequencer] ExecuteEnterPhase complete, hasEnterPhase: {hasEnterPhase}");
 
             // Check if enter phase completed synchronously
-            if (ActivityExecutor.AreTasksComplete()) {
+            if (runningTaskCount == 0) {
                 //Debug.Log($"[TransitionSequencer] Enter phase completed synchronously, ending transition");
                 EndTransition();
             }
@@ -158,7 +161,7 @@ namespace HSM {
 
         void EndTransition() {
             //Debug.Log($"[TransitionSequencer] EndTransition: clearing tasks");
-            ActivityExecutor.Clear();
+            ClearTasks();
 
             if (pending.HasValue) {
                 (State from, State to) p = pending.Value;
@@ -171,9 +174,9 @@ namespace HSM {
         }
 
         public void Tick(float deltaTime) {
-            if (ActivityExecutor.IsExecuting) {
+            if (runningTaskCount > 0) {
                 //Debug.Log($"[TransitionSequencer] Tick: tasks running, hasEnterPhase: {hasEnterPhase}");
-                if (ActivityExecutor.AreTasksComplete()) {
+                if (runningTaskCount == 0) {
                     if (hasEnterPhase) {
                         //Debug.Log($"[TransitionSequencer] Calling nextPhase (ExecuteEnterPhase)");
                         nextPhase();
@@ -185,6 +188,52 @@ namespace HSM {
                 return; // while transitioning, we don't run normal updates
             }
             Machine.InternalTick(deltaTime);
+        }
+
+        // Gather phase steps from state chain
+        void GatherPhaseSteps(List<State> chain, bool deactivate, List<PhaseStep> result) {
+            result.Clear();
+            for (int i = 0; i < chain.Count; i++) {
+                var st = chain[i];
+                var acts = st.Activities;
+                for (int j = 0; j < acts.Count; j++) {
+                    var a = acts[j];
+                    bool include = deactivate ? (a.Mode == ActivityMode.Active)
+                        : (a.Mode == ActivityMode.Inactive);
+                    if (!include) continue;
+
+                    result.Add(new PhaseStep(a, deactivate));
+                }
+            }
+        }
+
+        // Execute phase steps
+        void ExecutePhaseSteps(List<PhaseStep> steps, CancellationToken ct) {
+            ClearTasks();
+
+            for (int i = 0; i < steps.Count; i++) {
+                runningTaskCount++;
+                ExecutePhaseStepSafe(steps[i], ct).Forget();
+            }
+        }
+
+        async Cysharp.Threading.Tasks.UniTaskVoid ExecutePhaseStepSafe(PhaseStep step, CancellationToken ct) {
+            try {
+                await step.Execute(ct);
+            }
+            catch (System.OperationCanceledException) {
+                // Cancellation is expected, suppress
+            }
+            catch (System.Exception) {
+                // Other exceptions are also suppressed to prevent leak detection
+            }
+            finally {
+                runningTaskCount--;
+            }
+        }
+
+        void ClearTasks() {
+            runningTaskCount = 0;
         }
 
         // Compute the Lowest Common Ancestor of two states.

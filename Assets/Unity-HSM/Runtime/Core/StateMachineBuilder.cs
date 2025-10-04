@@ -20,6 +20,10 @@ namespace HSM {
             {
                 foreach (var state in states)
                 {
+                    foreach (var activity in state.Activities)
+                    {
+                        activity?.Dispose();
+                    }
                     state?.Dispose();
                 }
 

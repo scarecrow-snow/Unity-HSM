@@ -190,6 +190,51 @@ public class MyCustomActivity : Activity
 2. **Mode更新**: 処理の前後でModeを適切に更新
 3. **CancellationToken対応**: 長時間処理はctを渡してキャンセル可能に
 4. **同期処理の場合**: `await UniTask.CompletedTask;` または処理後即座にMode変更
+5. **Dispose対応**: リソース解放が必要な場合は`Dispose()`をoverride
+
+### リソース管理とDispose
+
+Activityは`IDisposable`を実装しており、StateMachineが破棄される際に自動的に`Dispose()`が呼び出されます。
+
+**Dispose実装例:**
+```csharp
+public class ResourceActivity : Activity
+{
+    private Texture2D loadedTexture;
+    private CancellationTokenSource cts;
+
+    public override async UniTask ActivateAsync(CancellationToken ct)
+    {
+        if (Mode != ActivityMode.Inactive) return;
+
+        Mode = ActivityMode.Activating;
+
+        cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        loadedTexture = await LoadTextureAsync(cts.Token);
+
+        Mode = ActivityMode.Active;
+    }
+
+    public override void Dispose()
+    {
+        // リソースの解放
+        if (loadedTexture != null)
+        {
+            UnityEngine.Object.Destroy(loadedTexture);
+            loadedTexture = null;
+        }
+
+        // CancellationTokenSourceの破棄
+        cts?.Dispose();
+        cts = null;
+    }
+}
+```
+
+**重要な注意点:**
+- `Dispose()`はStateMachineが破棄される時（通常はMonoBehaviour.OnDestroy）に自動的に呼ばれます
+- 長時間保持するリソース（Texture、AudioClip、CancellationTokenSourceなど）は必ずDisposeで解放してください
+- ActivityがStateに追加されると、StateMachineBuilderによって自動的にDispose対象として登録されます
 
 ### 実用例1: アニメーション制御
 
@@ -516,8 +561,11 @@ public override async UniTask ActivateAsync(CancellationToken ct)
 }
 ```
 
-### 4. リソースの管理
+### 4. リソースの管理とDispose
 
+リソースを保持するActivityは、`Dispose()`で必ずリソースを解放してください。
+
+**Good:**
 ```csharp
 public class ResourceActivity : Activity
 {
@@ -541,15 +589,40 @@ public class ResourceActivity : Activity
 
         Mode = ActivityMode.Deactivating;
 
-        // リソース解放
+        // 一時的な無効化
+        if (loadedObject != null)
+        {
+            loadedObject.SetActive(false);
+        }
+
+        Mode = ActivityMode.Inactive;
+        await UniTask.CompletedTask;
+    }
+
+    public override void Dispose()
+    {
+        // 完全なリソース解放
         if (loadedObject != null)
         {
             Object.Destroy(loadedObject);
             loadedObject = null;
         }
+    }
+}
+```
 
-        Mode = ActivityMode.Inactive;
-        await UniTask.CompletedTask;
+**Bad:**
+```csharp
+public class ResourceActivity : Activity
+{
+    private GameObject loadedObject;
+
+    // Disposeが実装されていない - メモリリークの原因！
+    public override async UniTask DeactivateAsync(CancellationToken ct)
+    {
+        // DeactivateでDestroyするのは非推奨
+        // （状態が再度アクティブになる可能性がある）
+        Object.Destroy(loadedObject);
     }
 }
 ```

@@ -21,10 +21,10 @@ Unity-HSMは、Unityでキャラクター制御や複雑な状態管理を効率
 ### Core システム
 
 #### State (Core/State.cs)
-基本状態クラス。すべての状態はこのクラスを継承します。
+基本状態クラス。すべての状態はこのクラスを継承します。`IDisposable`を実装しています。
 
 ```csharp
-public abstract class State {
+public abstract class State : IDisposable {
     public readonly StateMachine Machine;
     public readonly State Parent;
     public State ActiveChild;
@@ -34,6 +34,7 @@ public abstract class State {
     protected virtual void OnEnter() { }
     protected virtual void OnExit() { }
     protected virtual void OnUpdate(float deltaTime) { }
+    public virtual void Dispose() { }
 }
 ```
 
@@ -41,28 +42,42 @@ public abstract class State {
 - `GetInitialState()`: この状態に入った時の初期子状態を返す
 - `GetTransition()`: 状態遷移先を返す（nullなら現在状態を維持）
 - `OnEnter/OnExit/OnUpdate`: 状態のライフサイクルフック
+- `Dispose()`: StateMachine破棄時に呼ばれるリソース解放メソッド
 
 #### StateMachine (Core/StateMachine.cs)
-状態機械の実行エンジン。状態の開始、更新、遷移を管理します。
+状態機械の実行エンジン。状態の開始、更新、遷移を管理します。`IDisposable`を実装しています。
 
 ```csharp
-public class StateMachine {
+public class StateMachine : IDisposable {
     public readonly State Root;
     public readonly TransitionSequencer Sequencer;
 
     public void Tick(float deltaTime) // メインループ
     public void ChangeState(State from, State to) // 状態遷移実行
+    public void Dispose() // すべてのStateとActivityを破棄
 }
 ```
 
+**Disposeライフサイクル:**
+- `StateMachine.Dispose()`が呼ばれると、内部の`DisposeAllStates()`アクションが実行されます
+- `StateMachineBuilder`がBuild時にすべてのStateを収集し、Dispose時にすべてのStateとActivityを破棄します
+- MonoBehaviourの`OnDestroy()`で`machine?.Dispose()`を呼び出すことで、リソースが適切に解放されます
+
 #### Activity (Core/Activity.cs)
-状態に付随する非同期アクティビティの基底クラス。
+状態に付随する非同期アクティビティの基底クラス。`IDisposable`を実装しています。
 
 ```csharp
+public interface IActivity : IDisposable {
+    ActivityMode Mode { get; }
+    UniTask ActivateAsync(CancellationToken ct);
+    UniTask DeactivateAsync(CancellationToken ct);
+}
+
 public abstract class Activity : IActivity {
     public ActivityMode Mode { get; protected set; }
     public virtual async UniTask ActivateAsync(CancellationToken ct)
     public virtual async UniTask DeactivateAsync(CancellationToken ct)
+    public virtual void Dispose()
 }
 ```
 
@@ -72,34 +87,34 @@ public abstract class Activity : IActivity {
 - `Active`: アクティブ
 - `Deactivating`: ディアクティベーション中
 
-#### ActivityExecutor (Core/ActivityExecutor.cs)
-アクティビティの実行を管理する再利用可能なエンジン。TransitionSequencerから抽出され、外部からも利用可能です。
+**Disposeライフサイクル:**
+- StateMachineが破棄される際、すべてのStateとActivityの`Dispose()`が自動的に呼び出されます
+- リソース（Texture、AudioClip、CancellationTokenSourceなど）を保持する場合は、必ず`Dispose()`で解放してください
+- StateMachineBuilderがすべてのStateとActivityを収集し、Dispose時に適切にクリーンアップします
+
+#### ActivityExecutor (Runtime/Activities/ActivityExecutor.cs)
+汎用アクティビティ実行エンジン。TransitionSequencerから完全に独立し、外部からも自由に利用可能です。
 
 ```csharp
 public class ActivityExecutor {
     public bool IsExecuting { get; }
 
-    // 並列実行（ゼロアロケーション）
-    public void ExecuteActivitiesParallel(IReadOnlyList<IActivity> activities, bool isDeactivate, CancellationToken ct = default)
-
-    // 順次実行（ゼロアロケーション）
-    public async UniTask ExecuteActivitiesSequentialAsync(IReadOnlyList<IActivity> activities, bool isDeactivate, CancellationToken ct = default)
-
-    // PhaseStepパターンでの実行（TransitionSequencer用）
-    public void ExecutePhaseSteps(List<PhaseStep> steps, CancellationToken ct = default)
+    // Activity実行（並列）
+    public void Execute(IReadOnlyList<IActivity> activities, bool isDeactivate, CancellationToken ct = default)
+    public void Execute(IActivity activity, bool isDeactivate, CancellationToken ct = default)
 
     // タスク完了確認とキャンセル
     public bool AreTasksComplete()
     public void Cancel()
+    public void Clear()
 }
 ```
 
 **主要機能:**
-- **並列/順次実行**: アクティビティを並列または順次実行
-- **ゼロアロケーション**: IReadOnlyList<T>を使用し、内部でのアロケーションを削減
-- **実行監視**: IsExecutingプロパティで実行状態を確認
-- **キャンセル制御**: CancellationTokenによる柔軟なキャンセル管理
-- **再利用可能**: TransitionSequencer内部だけでなく外部からも利用可能
+- **汎用Activity実行**: 状態遷移とは無関係に任意のActivityを実行可能
+- **UniTaskVoid + fire-and-forget**: メモリリーク対策済みの非同期実行
+- **カウンター方式の完了追跡**: `runningTaskCount`による軽量な完了判定
+- **完全独立**: TransitionSequencerへの依存なし、外部から自由に利用可能
 
 **使用例:**
 ```csharp
@@ -107,22 +122,20 @@ var executor = new ActivityExecutor();
 var activities = new List<IActivity> { new SomeActivity(), new OtherActivity() };
 
 // 並列実行
-executor.ExecuteActivitiesParallel(activities, isDeactivate: false, ct);
+executor.Execute(activities, isDeactivate: false, ct);
 while (executor.IsExecuting) {
     await UniTask.Yield();
 }
-
-// 順次実行
-await executor.ExecuteActivitiesSequentialAsync(activities, isDeactivate: false, ct);
 ```
 
-#### TransitionSequencer (Core/TransitionSequencer.cs)
-状態遷移の非同期実行を管理。ActivityExecutorを内部で使用します。
+#### TransitionSequencer (Runtime/Core/TransitionSequencer.cs)
+状態遷移の非同期実行を管理。内部でタスク管理を行い、ActivityExecutorには依存しません。
 
 **主要機能:**
 - LCA（Lowest Common Ancestor）アルゴリズムによる効率的な状態遷移
 - 状態退出→状態変更→状態入場の3段階処理
-- アクティビティの並列/順次実行切り替え（ActivityExecutorに委譲）
+- **内部タスク管理**: `runningTaskCount`による軽量な完了追跡
+- **PhaseStepパターン**: 状態遷移専用の最適化されたActivity実行
 - **ゼロアロケーション最適化**: TempCollectionPoolによるプール化されたコレクション管理
 
 **プール管理システム:**
@@ -234,32 +247,39 @@ public class SequentialActivityGroup : Activity {
 
 ```
 Unity-HSM/
-├── Core/                             # 核となるシステムクラス
-│   ├── State.cs                      # 基本状態クラス (ViewParameters追加)
-│   ├── StateMachine.cs               # 状態機械エンジン
-│   ├── Activity.cs                   # アクティビティ基底クラス
-│   ├── ActivityExecutor.cs           # アクティビティ実行エンジン
-│   ├── TransitionSequencer.cs        # 状態遷移管理
-│   └── StateMachineBuilder.cs        # 状態機械構築
+├── CLAUDE.md                         # プロジェクト情報 (Claude Code用)
+├── Runtime/                          # ランタイムコード
+│   ├── Core/                         # 核となるステートマシンシステム
+│   │   ├── State.cs                  # 基本状態クラス (IDisposable対応)
+│   │   ├── StateMachine.cs           # 状態機械エンジン (IDisposable対応)
+│   │   ├── StateMachineBuilder.cs    # 状態機械構築・Dispose管理
+│   │   └── TransitionSequencer.cs    # 状態遷移管理 (内部タスク管理)
+│   ├── Activities/                   # アクティビティシステム
+│   │   ├── Activity.cs               # アクティビティ基底クラス (IDisposable対応)
+│   │   ├── ActivityExecutor.cs       # 汎用アクティビティ実行エンジン
+│   │   ├── Sequence.cs               # PhaseStep定義
+│   │   └── Groups/
+│   │       └── SequentialActivityGroup.cs  # 順次実行グループ
+│   └── Interfaces/
+│       └── IStateMachineProvider.cs  # StateMachine提供インターフェース
 ├── Editor/                           # Unityエディタ拡張
-│   ├── StateMachineEditor.cs         # Inspector拡張
-│   └── StateMachineViewer.cs         # EditorWindow - 階層可視化
-├── Interfaces/                       # インターフェース
-│   └── IStateMachineProvider.cs      # StateMachine提供インターフェース
-├── States/                           # 具体的な状態実装
-│   ├── PlayerRoot.cs                 # プレイヤールート状態
-│   ├── Grounded.cs                   # 地上状態
-│   ├── Airborne.cs                   # 空中状態
-│   ├── Idle.cs                       # 静止状態
-│   └── Move.cs                       # 移動状態
-├── Activities/                       # アクティビティ実装
-│   ├── ColorPhaseActivity.cs         # 色変更アクティビティ
-│   ├── DelayActivationActivity.cs    # 遅延アクティベーション
-│   └── SequentialActivityGroup.cs    # 順次実行グループ (Activities公開)
+│   ├── StateMachineEditor.cs         # Inspector拡張 (IStateMachineProvider対応)
+│   └── StateMachineViewer.cs         # EditorWindow - 階層可視化ツール
 ├── Examples/                         # 使用例
-│   └── ActivityExecutorExample.cs    # ActivityExecutor使用例
-└── PlayerStateDriver.cs              # プレイヤー制御メインクラス
+│   └── ActivityExecutorExample.cs    # ActivityExecutor外部利用サンプル
+└── Documentation/                    # ドキュメント
+    └── ACTIVITY_GUIDE.md             # Activityガイド
 ```
+
+**パッケージ構成:**
+- **Runtime/Core**: ステートマシンの核となるクラス群（独立性・依存関係なし）
+- **Runtime/Activities**: Activity実行システム（ActivityExecutorはTransitionSequencerから独立）
+- **Runtime/Interfaces**: 外部連携用インターフェース
+- **Editor**: エディタ拡張ツール（IStateMachineProvider経由でアクセス）
+- **Examples**: 外部からの利用サンプルコード
+
+**注意:** 実際のプレイヤー実装例（States/、Activities/、PlayerStateDriver.cs等）は
+Unity-HSMパッケージ外のプロジェクト側に配置されています。
 
 ## 使用方法
 
@@ -541,6 +561,21 @@ static void StatesToExit(State from, State lca, List<State> result) {
 - **State.ViewParameters**: エディタ用のFoldout状態管理（#if UNITY_EDITORで囲まれている）
 - **SequentialActivityGroup.Activities**: 内部アクティビティの公開プロパティ追加
 - **リアルタイムデバッグ**: 実行時の状態とアクティビティを視覚的に確認可能
+
+### 2025年10月: リソース管理とDispose対応
+- **IDisposable実装**: State、Activity、StateMachineすべてにIDisposableインターフェースを追加
+- **自動Disposeシステム**: StateMachineBuilderがすべてのStateとActivityを収集し、Dispose時に自動的に解放
+- **ActivityExecutor最適化**: UniTaskVoidとfire-and-forgetパターンでメモリリーク対策
+- **CancellationTokenSource管理**: TransitionSequencerとActivityExecutorでCTSを適切にDispose
+- **UniTaskリーク検出対応**: 例外ハンドリングとカウンター方式でリーク警告を完全に解消
+- **PlayerStateDriver改善**: OnDestroy()でStateMachine.Dispose()を呼び出すライフサイクル管理
+
+### 2025年10月: アーキテクチャリファクタリング
+- **TransitionSequencer独立化**: ActivityExecutorへの依存を削除し、内部タスク管理に移行
+- **PhaseStepパターン内部化**: GatherPhaseSteps/ExecutePhaseStepsをTransitionSequencer内に移動
+- **ActivityExecutor汎用化**: 状態遷移専用ロジックを削除し、完全な汎用Activityエンジンに
+- **フォルダ構造整理**: Runtime/Core, Runtime/Activities, Editorなど機能別に再編成
+- **責任の明確化**: Core（ステートマシン）とActivities（実行エンジン）の分離
 
 ## 今後の拡張予定
 - [ ] より多様なアクティビティタイプ

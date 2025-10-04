@@ -26,5 +26,10 @@ namespace HSM
             await base.DeactivateAsync(ct);
             Mode = ActivityMode.Inactive;
         }
+
+        public override void Dispose()
+        {
+            Debug.Log($"Disposed MessageActivity: {Message}");
+        }
     }
 }

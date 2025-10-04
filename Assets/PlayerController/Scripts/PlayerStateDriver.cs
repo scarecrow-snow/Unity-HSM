@@ -84,7 +84,10 @@ namespace HSM
             Gizmos.DrawWireSphere(groundCheck.position, groundRadius);
         }
 
-
+        void OnDestroy()
+        {
+            machine?.Dispose();
+        }
     }
 
     [Serializable]

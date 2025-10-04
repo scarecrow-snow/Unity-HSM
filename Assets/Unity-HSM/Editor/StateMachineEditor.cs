@@ -58,7 +58,7 @@ namespace HSM.Editor
 
             // Activity Executor Status
             EditorGUILayout.Toggle("Is Executing Activities",
-                machine.Sequencer.ActivityExecutor.IsExecuting);
+                machine.Sequencer.IsExecuting);
 
             GUI.enabled = true;
         }
