@@ -2,50 +2,82 @@ using System;
 using System.Collections.Generic;
 using UnityUtils;
 
-namespace HSM {
-    public class StateMachine : IDisposable {
+namespace HSM
+{
+    public class StateMachine : IDisposable
+    {
         public readonly State Root;
         public readonly TransitionSequencer Sequencer;
         bool started;
         bool disposed;
 
-        public StateMachine(State root) {
+        public StateMachine(State root)
+        {
             Root = root;
             Sequencer = new TransitionSequencer(this);
         }
 
-        public void Start() {
+        public void Start()
+        {
             if (started) return;
-            
+
             started = true;
-            Root.Enter();
+
+            // TransitionSequencerを使用して初期遷移を実行
+            // Root.Start()ではなく、ここで行うことで、初期遷移もSequencerの管理下に置く
+            State initialLeaf = Root;
+            while (initialLeaf.InternalGetInitialState() != null)
+            {
+                initialLeaf = initialLeaf.InternalGetInitialState();
+            }
+            Sequencer.RequestTransition(null, initialLeaf);
         }
 
-        public void Tick(float deltaTime) {
+        public void Tick(float deltaTime)
+        {
             if (!started) Start();
             Sequencer.Tick(deltaTime);
         }
-        
-        internal void InternalTick(float deltaTime) => Root.Update(deltaTime);
-        
-        // Perform the actual switch from 'from' to 'to' by exiting up to the shared ancestor, then entering down to the target.
-        public void ChangeState(State from, State to) {
-            if (from == to || from == null || to == null) return;
 
-            State lca = TransitionSequencer.Lca(from, to);
+        internal void InternalTick(float deltaTime) => Root.Update(deltaTime);
+
+        // Perform the actual switch from 'from' to 'to' by exiting up to the shared ancestor, then entering down to the target.
+        // Note: This is called by TransitionSequencer, which handles Activity activation/deactivation separately
+        public void ChangeState(State from, State to)
+        {
+            //UnityEngine.Debug.Log($"[ChangeState] START: {from?.GetType().Name} -> {to?.GetType().Name}");
+            if (from == to || to == null) return;
+
+            State lca = from == null ? null : TransitionSequencer.Lca(from, to);
+            //UnityEngine.Debug.Log($"[ChangeState] LCA: {lca?.GetType().Name}");
 
             // Exit current branch up to (but not including) LCA
-            for (State s = from; s != lca; s = s.Parent) s.Exit();
+            if (from != null)
+            {
+                for (State s = from; s != lca; s = s.Parent) {
+                    //UnityEngine.Debug.Log($"[ChangeState] Exiting: {s.GetType().Name}");
+                    s.Exit();
+                }
+            }
+
+            //UnityEngine.Debug.Log($"[ChangeState] Exit complete, entering...");
 
             // Enter target branch from LCA down to target using pooled stack
-            using (var scope = TempStackPool<State>.GetScoped()) {
+            using (var scope = TempStackPool<State>.GetScoped())
+            {
                 var stack = scope.Stack;
-                for (State s = to; s != lca; s = s.Parent) stack.Push(s);
-                while (stack.Count > 0) stack.Pop().Enter();
+                for (State s = to; s != null && s != lca; s = s.Parent) stack.Push(s);
+                while (stack.Count > 0) {
+                    var state = stack.Pop();
+                    //UnityEngine.Debug.Log($"[ChangeState] Entering: {state.GetType().Name}");
+                    state.Enter();
+                }
             }
+            //UnityEngine.Debug.Log($"[ChangeState] COMPLETE");
         }
 
-        public void Dispose() {
+        public void Dispose()
+        {
             if (disposed) return;
             disposed = true;
 

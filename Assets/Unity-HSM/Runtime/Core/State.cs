@@ -35,6 +35,9 @@ namespace HSM {
         protected virtual State GetInitialState() => null; // Initial child to enter when this state starts (null = this is the leaf)
         protected virtual State GetTransition() => null; // Target state to switch to this frame (null = stay in current state)
 
+        // Internal accessor for GetInitialState() to allow StateMachine to access it
+        internal State InternalGetInitialState() => GetInitialState();
+
         // Lifecycle hooks
         protected virtual void OnEnter() { }
         protected virtual void OnExit() { }
@@ -58,7 +61,8 @@ namespace HSM {
             State t = GetTransition();
             if (t != null)
             {
-                Machine.Sequencer.RequestTransition(this, t);
+                // Use the current leaf state as the transition source
+                Machine.Sequencer.RequestTransition(Machine.Root.Leaf(), t);
                 return;
             }
 

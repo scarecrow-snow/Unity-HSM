@@ -12,11 +12,14 @@ namespace HSM {
             delay = TimeSpan.FromSeconds(seconds);
         }
 
-        
-        public override async UniTask ActivateAsync(CancellationToken ct) {
-            //Debug.Log($"Activating {GetType().Name} (mode={this.Mode}) after {seconds} seconds");
+
+        public override async UniTask ActivateAsync(CancellationToken ct)
+        {
+            if (Mode != ActivityMode.Inactive) return;
+
+            Mode = ActivityMode.Activating;
             await UniTask.Delay(delay, cancellationToken: ct);
-            await base.ActivateAsync(ct);
+            Mode = ActivityMode.Active;
         }
     }
 }

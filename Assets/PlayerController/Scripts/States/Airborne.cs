@@ -15,7 +15,13 @@ namespace HSM {
             });
         }
 
-        protected override State GetTransition() => ctx.grounded ? ((PlayerRoot)Parent).Grounded : null;
+        protected override State GetTransition()
+        {
+            // Don't transition back to Grounded while jumping (velocity is upward)
+            if (ctx.rb != null && ctx.rb.linearVelocity.y > 0.1f) return null;
+
+            return ctx.grounded ? ((PlayerRoot)Parent).Grounded : null;
+        } 
 
         protected override void OnEnter()
         {

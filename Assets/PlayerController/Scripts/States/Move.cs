@@ -8,9 +8,7 @@ namespace HSM {
         {
             this.ctx = ctx;
             var Sequence = new SequentialActivityGroup();
-            Sequence.AddActivity(new MessageActivity("move 1"));
-            Sequence.AddActivity(new DelayActivationActivity());
-            Sequence.AddActivity(new MessageActivity("move 2"));
+            Sequence.AddActivity(new MessageActivity("move"));
             Add(Sequence);
         }
 

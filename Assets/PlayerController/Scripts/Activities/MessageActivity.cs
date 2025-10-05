@@ -12,19 +12,26 @@ namespace HSM
         {
             Message = message;
         }
-        public override async UniTask ActivateAsync(CancellationToken ct)
+        public override UniTask ActivateAsync(CancellationToken ct)
         {
+            if (Mode != ActivityMode.Inactive) return UniTask.CompletedTask;
+
             Mode = ActivityMode.Activating;
-            Debug.Log(Message);
-            await base.ActivateAsync(ct);
+            Debug.Log($"Activateing MessageActivity: {Message}");
             Mode = ActivityMode.Active;
+
+            return UniTask.CompletedTask;
         }
 
-        public override async UniTask DeactivateAsync(CancellationToken ct)
+        public override UniTask DeactivateAsync(CancellationToken ct)
         {
+            if (Mode != ActivityMode.Active) return UniTask.CompletedTask;
+
             Mode = ActivityMode.Deactivating;
-            await base.DeactivateAsync(ct);
+            Debug.Log($"Deactivating MessageActivity: {Message}");
             Mode = ActivityMode.Inactive;
+
+            return UniTask.CompletedTask;
         }
 
         public override void Dispose()

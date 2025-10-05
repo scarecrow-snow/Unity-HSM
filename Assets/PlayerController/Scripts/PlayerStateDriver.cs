@@ -56,8 +56,6 @@ namespace HSM
 
             ctx.grounded = Physics.CheckSphere(groundCheck.position, groundRadius, groundMask);
 
-            machine.Tick(Time.deltaTime);
-
             var path = State.StatePath(machine.Root.Leaf());
 
             if (path != lastPath)
@@ -65,6 +63,8 @@ namespace HSM
                 Debug.Log($"State {path}");
                 lastPath = path;
             }
+            
+            machine.Tick(Time.deltaTime);
         }
 
         void FixedUpdate()
