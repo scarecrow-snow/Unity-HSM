@@ -56,21 +56,32 @@ namespace HSM
             {
                 for (State s = from; s != lca; s = s.Parent) {
                     //UnityEngine.Debug.Log($"[ChangeState] Exiting: {s.GetType().Name}");
-                    s.Exit();
+                    // ActiveChildのクリアとOnExitのみ実行（再帰的なExitは行わない）
+                    s.ActiveChild = null;
+                    s.OnExitInternal();
                 }
             }
 
             //UnityEngine.Debug.Log($"[ChangeState] Exit complete, entering...");
 
-            // Enter target branch from LCA down to target using pooled stack
+            // toから GetInitialState() を辿ってリーフまで到達
+            State targetLeaf = to;
+            while (targetLeaf != null && targetLeaf.InternalGetInitialState() != null)
+            {
+                targetLeaf = targetLeaf.InternalGetInitialState();
+            }
+
+            // Enter target branch from LCA down to target leaf using pooled stack
             using (var scope = TempStackPool<State>.GetScoped())
             {
                 var stack = scope.Stack;
-                for (State s = to; s != null && s != lca; s = s.Parent) stack.Push(s);
+                for (State s = targetLeaf; s != null && s != lca; s = s.Parent) stack.Push(s);
                 while (stack.Count > 0) {
                     var state = stack.Pop();
                     //UnityEngine.Debug.Log($"[ChangeState] Entering: {state.GetType().Name}");
-                    state.Enter();
+                    // ActiveChildの設定とOnEnterのみ実行（再帰的なEnterは行わない）
+                    if (state.Parent != null) state.Parent.ActiveChild = state;
+                    state.OnEnterInternal();
                 }
             }
             //UnityEngine.Debug.Log($"[ChangeState] COMPLETE");

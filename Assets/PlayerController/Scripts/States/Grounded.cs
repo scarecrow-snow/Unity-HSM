@@ -17,6 +17,11 @@ namespace HSM {
         
         protected override State GetInitialState() => Idle;
 
+        protected override void OnEnter()
+        {
+            Debug.Log("Grounded On Enter");
+        }
+
         protected override State GetTransition() {
             if (ctx.jumpPressed) {
                 ctx.jumpPressed = false;

@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
-
+using UnityEngine;
 using UnityUtils;
 
 
@@ -150,12 +150,16 @@ namespace HSM
 
         void ExecuteEnterPhase()
         {
+            // 重要: 二重呼び出しを防ぐため、最初にフラグをクリア
+            hasEnterPhase = false;
+
             // 2. ChangeStateで状態ツリーの構造を更新
             Machine.ChangeState(transitionFrom, transitionTo);
 
             // 3. ChangeStateで入った最終的なリーフステートを計算
-            // transitionTo.Parentから実際のリーフを取得（ChangeStateで子ステートに入った後）
-            State finalLeaf = transitionTo.Parent?.Leaf() ?? transitionTo.Leaf();
+            // Machine.ChangeStateによって、transitionToから子ステートへの遷移が完了している
+            // 現在のアクティブリーフを取得（Machine.Rootから辿る）
+            State finalLeaf = Machine.Root.Leaf();
 
             // 4. 新ブランチのActivityをActivate
             using (var enterChainScope = TempCollectionPool<List<State>, State>.GetScoped())
@@ -171,8 +175,6 @@ namespace HSM
                 // Enterフェーズを並列実行
                 ExecutePhaseSteps(enterSteps, cts.Token);
             }
-
-            hasEnterPhase = false; // 実行後にフラグをクリア
 
             // Enterフェーズが同期的に完了したかチェック
             if (runningTaskCount == 0)
@@ -197,17 +199,6 @@ namespace HSM
         {
             if (runningTaskCount > 0)
             {
-                if (runningTaskCount == 0)
-                {
-                    if (hasEnterPhase)
-                    {
-                        nextPhase();
-                    }
-                    else
-                    {
-                        EndTransition();
-                    }
-                }
                 return; // 遷移中は通常のUpdateを実行しない
             }
             Machine.InternalTick(deltaTime);
@@ -226,6 +217,10 @@ namespace HSM
                 for (int j = 0; j < acts.Count; j++)
                 {
                     var a = acts[j];
+
+                    // Exit phase: Activeなものだけを収集してDeactivate
+                    // Enter phase: Inactiveなものだけを収集してActivate
+                    // これにより、すでに正しい状態にあるActivityは重複実行されない
                     bool include = deactivate ? (a.Mode == ActivityMode.Active)
                         : (a.Mode == ActivityMode.Inactive);
                     if (!include) continue;
@@ -259,13 +254,28 @@ namespace HSM
             {
                 // キャンセルは想定内なので抑制
             }
-            catch (System.Exception)
+            catch (System.Exception e)
             {
-                // その他の例外もリーク検出を防ぐため抑制
+                // その他の例外の場合はエラーとして出力
+                Debug.LogError(e);
+                throw;
             }
             finally
             {
                 runningTaskCount--;
+
+                // すべてのタスクが完了したら次のフェーズへ
+                if (runningTaskCount == 0)
+                {
+                    if (hasEnterPhase)
+                    {
+                        nextPhase();
+                    }
+                    else
+                    {
+                        EndTransition();
+                    }
+                }
             }
         }
 

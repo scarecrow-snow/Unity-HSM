@@ -28,6 +28,7 @@ namespace HSM
 
         protected override void OnEnter()
         {
+            Debug.Log("Idle OnEnter");
             ctx.velocity.x = 0f;
         }
 

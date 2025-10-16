@@ -43,6 +43,10 @@ namespace HSM {
         protected virtual void OnExit() { }
         protected virtual void OnUpdate(float deltaTime) { }
 
+        // StateMachineから直接呼び出される（再帰的なEnterを避けるため）
+        internal void OnEnterInternal() => OnEnter();
+        internal void OnExitInternal() => OnExit();
+
         internal void Enter()
         {
             if (Parent != null) Parent.ActiveChild = this;
