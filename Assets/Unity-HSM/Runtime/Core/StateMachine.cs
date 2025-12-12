@@ -74,7 +74,7 @@ namespace HSM
             // Enter target branch from LCA down to target leaf using pooled stack
             using (var scope = TempStackPool<State>.GetScoped())
             {
-                var stack = scope.Stack;
+                var stack = scope.Value;
                 for (State s = targetLeaf; s != null && s != lca; s = s.Parent) stack.Push(s);
                 while (stack.Count > 0) {
                     var state = stack.Pop();

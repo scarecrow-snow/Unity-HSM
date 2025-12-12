@@ -124,8 +124,8 @@ namespace HSM
             using (var exitChainScope = TempCollectionPool<List<State>, State>.GetScoped())
             using (var exitStepsScope = TempCollectionPool<List<PhaseStep>, PhaseStep>.GetScoped())
             {
-                var exitChain = exitChainScope.Collection;
-                var exitSteps = exitStepsScope.Collection;
+                var exitChain = exitChainScope.Value;
+                var exitSteps = exitStepsScope.Value;
 
                 StatesToExit(from, lca, exitChain);
 
@@ -165,8 +165,8 @@ namespace HSM
             using (var enterChainScope = TempCollectionPool<List<State>, State>.GetScoped())
             using (var enterStepsScope = TempCollectionPool<List<PhaseStep>, PhaseStep>.GetScoped())
             {
-                var enterChain = enterChainScope.Collection;
-                var enterSteps = enterStepsScope.Collection;
+                var enterChain = enterChainScope.Value;
+                var enterSteps = enterStepsScope.Value;
 
                 StatesToEnter(finalLeaf, transitionLca, enterChain);
 
@@ -292,7 +292,7 @@ namespace HSM
             // aの全ての親をセットに格納
             using (var scope = TempCollectionPool<HashSet<State>, State>.GetScoped())
             {
-                var ap = scope.Collection;
+                var ap = scope.Value;
                 for (var s = a; s != null; s = s.Parent) ap.Add(s);
 
                 // bの親でaの親でもある最初のものを見つける

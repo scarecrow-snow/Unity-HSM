@@ -60,6 +60,12 @@ namespace HSM.Editor
 
         private void OnUpdate()
         {
+            if (!IsAlive(selectedProvider) || !IsAlive(selectedGameObject))
+            {
+                selectedProvider = null;
+                selectedGameObject = null;
+            }
+
             if (selectedProvider == null)
                 OnSelectionChanged();
 
@@ -89,7 +95,7 @@ namespace HSM.Editor
 
             depth = 0;
 
-            if (selectedProvider != null && selectedProvider.Machine != null)
+            if (IsAlive(selectedProvider) && selectedProvider.Machine != null)
             {
                 DrawHeader(selectedProvider.Machine);
                 DrawState(selectedProvider.Machine.Root);
@@ -199,9 +205,19 @@ namespace HSM.Editor
             EditorGUI.DrawRect(rect, GUI.skin.label.normal.textColor);
         }
 
+        bool IsAlive(object target)
+        {
+            if (target is UnityEngine.Object unityObj)
+            {
+                return unityObj != null;
+            }
+
+            return target != null;
+        }
+
         bool IsOnActivePath(State state)
         {
-            if (!Application.isPlaying || selectedProvider?.Machine == null)
+            if (!Application.isPlaying || !IsAlive(selectedProvider) || selectedProvider.Machine == null)
                 return false;
 
             State leaf = selectedProvider.Machine.Root.Leaf();
